@@ -1,0 +1,48 @@
+{
+    "train":  [
+                  {
+                      "id":  "smoke_01",
+                      "image_path":  [
+                                         "smoke_01_frontal.bmp",
+                                         "smoke_01_lateral.bmp"
+                                     ],
+                      "report":  "lungs are clear . heart size is normal . no pleural effusion ."
+                  },
+                  {
+                      "id":  "smoke_02",
+                      "image_path":  [
+                                         "smoke_02_frontal.bmp",
+                                         "smoke_02_lateral.bmp"
+                                     ],
+                      "report":  "lungs are clear . heart size is normal . no pleural effusion ."
+                  },
+                  {
+                      "id":  "smoke_03",
+                      "image_path":  [
+                                         "smoke_03_frontal.bmp",
+                                         "smoke_03_lateral.bmp"
+                                     ],
+                      "report":  "lungs are clear . heart size is normal . no pleural effusion ."
+                  }
+              ],
+    "val":  [
+                {
+                    "id":  "smoke_04",
+                    "image_path":  [
+                                       "smoke_04_frontal.bmp",
+                                       "smoke_04_lateral.bmp"
+                                   ],
+                    "report":  "lungs are clear . heart size is normal . no pleural effusion ."
+                }
+            ],
+    "test":  [
+                 {
+                     "id":  "smoke_05",
+                     "image_path":  [
+                                        "smoke_05_frontal.bmp",
+                                        "smoke_05_lateral.bmp"
+                                    ],
+                     "report":  "lungs are clear . heart size is normal . no pleural effusion ."
+                 }
+             ]
+}
