@@ -64,6 +64,7 @@ class BaseTrainer(object):
             self._record_best(log)
 
             wandb.log({
+                'epoch': epoch,
                 'train_loss': log['train_loss'],
                 'val_loss': log['val_loss'],
                 'val_BLEU_1': log['val_BLEU_1'],
