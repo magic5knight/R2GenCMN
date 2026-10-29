@@ -31,7 +31,8 @@ class BaseTrainer(object):
 
         self.mnt_mode = args.monitor_mode
         self.mnt_metric = 'val_' + args.monitor_metric
-        self.mnt_metric_test = 'test_' + args.monitor_metric
+        # Test metrics are calculated once after training, not used for checkpoint selection.
+        # self.mnt_metric_test = 'test_' + args.monitor_metric
         assert self.mnt_mode in ['min', 'max']
 
         self.mnt_best = inf if self.mnt_mode == 'min' else -inf
@@ -40,8 +41,9 @@ class BaseTrainer(object):
         self.start_epoch = 1
         self.checkpoint_dir = args.save_dir
 
-        self.best_recorder = {'val': {self.mnt_metric: self.mnt_best},
-                              'test': {self.mnt_metric_test: self.mnt_best}}
+        self.best_recorder = {'val': {self.mnt_metric: self.mnt_best}}
+        # The previous per-epoch test recorder is intentionally disabled:
+        # 'test': {self.mnt_metric_test: self.mnt_best}
 
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
@@ -55,7 +57,9 @@ class BaseTrainer(object):
 
     def train(self):
         not_improved_count = 0
+        last_epoch = self.start_epoch - 1
         for epoch in range(self.start_epoch, self.epochs + 1):
+            last_epoch = epoch
             result = self._train_epoch(epoch)
 
             # save logged informations into log dict
@@ -103,8 +107,10 @@ class BaseTrainer(object):
                         self.early_stop))
                     break
 
-            if epoch % self.save_period == 0:
+            if epoch % self.save_period == 0 or best:
                 self._save_checkpoint(epoch, save_best=best)
+
+        self._evaluate_best_on_test(step=last_epoch + 1)
 
     def _record_best(self, log):
         improved_val = (self.mnt_mode == 'min' and log[self.mnt_metric] <= self.best_recorder['val'][
@@ -113,21 +119,24 @@ class BaseTrainer(object):
         if improved_val:
             self.best_recorder['val'].update(log)
 
-        improved_test = (self.mnt_mode == 'min' and log[self.mnt_metric_test] <= self.best_recorder['test'][
-            self.mnt_metric_test]) or \
-                        (self.mnt_mode == 'max' and log[self.mnt_metric_test] >= self.best_recorder['test'][
-                            self.mnt_metric_test])
-        if improved_test:
-            self.best_recorder['test'].update(log)
+        # Test-set best tracking used to happen every epoch. It is disabled so test
+        # metrics remain independent until the selected validation-best checkpoint is evaluated.
+        # improved_test = (self.mnt_mode == 'min' and log[self.mnt_metric_test] <= self.best_recorder['test'][
+        #     self.mnt_metric_test]) or \
+        #                 (self.mnt_mode == 'max' and log[self.mnt_metric_test] >= self.best_recorder['test'][
+        #                     self.mnt_metric_test])
+        # if improved_test:
+        #     self.best_recorder['test'].update(log)
 
     def _print_best(self):
         self.logger.info('Best results (w.r.t {}) in validation set:'.format(self.args.monitor_metric))
         for key, value in self.best_recorder['val'].items():
             self.logger.info('\t{:15s}: {}'.format(str(key), value))
 
-        self.logger.info('Best results (w.r.t {}) in test set:'.format(self.args.monitor_metric))
-        for key, value in self.best_recorder['test'].items():
-            self.logger.info('\t{:15s}: {}'.format(str(key), value))
+        # Test metrics are reported once by _evaluate_best_on_test(), not as an epoch-best.
+        # self.logger.info('Best results (w.r.t {}) in test set:'.format(self.args.monitor_metric))
+        # for key, value in self.best_recorder['test'].items():
+        #     self.logger.info('\t{:15s}: {}'.format(str(key), value))
 
     def _prepare_device(self, n_gpu_use):
         n_gpu = torch.cuda.device_count()
@@ -225,23 +234,56 @@ class Trainer(BaseTrainer):
                                        {i: [re] for i, re in enumerate(val_res)})
             log.update(**{'val_' + k: v for k, v in val_met.items()})
 
-        self.logger.info('[{}/{}] Start to evaluate in the test set.'.format(epoch, self.epochs))
+        # Per-epoch test evaluation was moved to _evaluate_best_on_test().
+        # self.logger.info('[{}/{}] Start to evaluate in the test set.'.format(epoch, self.epochs))
+        # self.model.eval()
+        # with torch.no_grad():
+        #     test_gts, test_res = [], []
+        #     for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.test_dataloader):
+        #         images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
+        #             self.device), reports_masks.to(self.device)
+        #         output, _ = self.model(images, mode='sample')
+        #         reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
+        #         ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+        #         test_res.extend(reports)
+        #         test_gts.extend(ground_truths)
+        #
+        #     test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
+        #                                 {i: [re] for i, re in enumerate(test_res)})
+        #     log.update(**{'test_' + k: v for k, v in test_met.items()})
+
+        self.lr_scheduler.step()
+
+        return log
+
+    def _evaluate_best_on_test(self, step):
+        best_path = os.path.join(self.checkpoint_dir, 'model_best.pth')
+        if not os.path.isfile(best_path):
+            self.logger.warning(
+                "Best checkpoint '{}' was not found; skipping test evaluation.".format(best_path))
+            return
+
+        self.logger.info('Evaluating test set once using best checkpoint: {}'.format(best_path))
+        checkpoint = torch.load(best_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint['state_dict'])
         self.model.eval()
+
+        test_gts, test_res = [], []
         with torch.no_grad():
-            test_gts, test_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.test_dataloader):
-                images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
-                    self.device), reports_masks.to(self.device)
+            for images_id, images, reports_ids, reports_masks in self.test_dataloader:
+                images = images.to(self.device)
+                reports_ids = reports_ids.to(self.device)
                 output, _ = self.model(images, mode='sample')
                 reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 test_res.extend(reports)
                 test_gts.extend(ground_truths)
 
-            test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
-                                        {i: [re] for i, re in enumerate(test_res)})
-            log.update(**{'test_' + k: v for k, v in test_met.items()})
+        test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
+                                    {i: [re] for i, re in enumerate(test_res)})
+        test_log = {'test_' + key: value for key, value in test_met.items()}
 
-        self.lr_scheduler.step()
+        for key, value in test_log.items():
+            self.logger.info('\t{:15s}: {}'.format(key, value))
 
-        return log
+        wandb.log(test_log, step=step)
