@@ -194,9 +194,14 @@ class Trainer(BaseTrainer):
         self.model.eval()
         with torch.no_grad():
             val_gts, val_res = [], []
+            val_loss = 0.0
             for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.val_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
+
+                val_output = self.model(images, reports_ids, mode='train')
+                loss = self.criterion(val_output, reports_ids, reports_masks)
+                val_loss += loss.item()
 
                 output, _ = self.model(images, mode='sample')
                 reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
@@ -204,6 +209,7 @@ class Trainer(BaseTrainer):
                 val_res.extend(reports)
                 val_gts.extend(ground_truths)
 
+            log['val_loss'] = val_loss / len(self.val_dataloader)
             val_met = self.metric_ftns({i: [gt] for i, gt in enumerate(val_gts)},
                                        {i: [re] for i, re in enumerate(val_res)})
             log.update(**{'val_' + k: v for k, v in val_met.items()})
