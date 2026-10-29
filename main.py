@@ -2,6 +2,7 @@ import argparse
 
 import numpy as np
 import torch
+import wandb
 
 from models.models import BaseCMNModel
 from modules.dataloaders import R2DataLoader
@@ -101,6 +102,11 @@ def main():
     # parse arguments
     args = parse_agrs()
 
+    wandb.init(
+        project='r2gencmn',
+        config=vars(args),
+    )
+
     # fix random seeds
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
@@ -129,6 +135,7 @@ def main():
     # build trainer and start to train
     trainer = Trainer(model, criterion, metrics, optimizer, args, lr_scheduler, train_dataloader, val_dataloader, test_dataloader)
     trainer.train()
+    wandb.finish()
 
 
 if __name__ == '__main__':

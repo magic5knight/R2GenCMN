@@ -3,6 +3,7 @@ import os
 from abc import abstractmethod
 
 import torch
+import wandb
 from numpy import inf
 
 
@@ -61,6 +62,15 @@ class BaseTrainer(object):
             log = {'epoch': epoch}
             log.update(result)
             self._record_best(log)
+
+            wandb.log({
+                'train_loss': log['train_loss'],
+                'val_loss': log['val_loss'],
+                'val_BLEU_1': log['val_BLEU_1'],
+                'val_BLEU_2': log['val_BLEU_2'],
+                'val_BLEU_3': log['val_BLEU_3'],
+                'val_BLEU_4': log['val_BLEU_4'],
+            }, step=epoch)
 
             # print logged informations to the screen
             for key, value in log.items():
