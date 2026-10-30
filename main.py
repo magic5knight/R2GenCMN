@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import torch
 import wandb
+from datetime import datetime
 
 from models.models import BaseCMNModel
 from modules.dataloaders import R2DataLoader
@@ -104,6 +105,7 @@ def main():
 
     wandb.init(
         project='r2gencmn',
+        name=f"r2gencmn_{datetime.now().strftime('%Y%m%d')}",
         config=vars(args),
     )
 
