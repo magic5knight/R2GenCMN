@@ -4,7 +4,7 @@ python main.py \
     --dataset_name iu_xray \
     --max_seq_length 60 \
     --threshold 3 \
-    --epochs 50\
+    --epochs 100\
     --batch_size 8 \
     --lr_ve 1e-4 \
     --lr_ed 5e-4 \
