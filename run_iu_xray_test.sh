@@ -18,4 +18,4 @@ python main.py \
     --beam_size 3 \
     --save_dir results/iu_xray/ \
     --log_period 50 \
-    --early_stopping 20
+    --early_stop 20
