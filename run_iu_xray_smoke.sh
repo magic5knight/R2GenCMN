@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tiny CPU smoke run using the synthetic 5-patient fixture in data/iu_xray_smoke.
+# Tiny smoke run (GPU if available, otherwise CPU) using the synthetic 5-patient fixture in data/iu_xray_smoke.
 python main.py \
     --image_dir data/iu_xray_smoke/images/ \
     --ann_path data/iu_xray_smoke/annotation.json \
@@ -18,7 +18,7 @@ python main.py \
     --sample_method greedy \
     --beam_size 1 \
     --block_trigrams 0 \
-    --n_gpu 0 \
+    --n_gpu 1 \
     --epochs 1 \
     --save_dir results/iu_xray_smoke/ \
     --record_dir records/iu_xray_smoke/ \
