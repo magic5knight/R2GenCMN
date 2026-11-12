@@ -18,6 +18,7 @@ class BaseCMNModel(nn.Module):
             in_chans=64,
             patch_size=4,
             out_indices=(2,),
+            forward_type="v04",
         )
         self.visual_ffn = nn.Sequential(
             nn.LayerNorm(384),
