@@ -66,6 +66,8 @@ def parse_agrs():
 
     # Trainer settings
     parser.add_argument('--n_gpu', type=int, default=1, help='the number of gpus to be used.')
+    parser.add_argument('--vmamba_checkpoint', type=int, default=-1, choices=[-1, 0, 1],
+                        help='gradient checkpointing for VMamba blocks: -1 auto (on when no selective-scan CUDA kernel), 0 off, 1 on.')
     parser.add_argument('--epochs', type=int, default=100, help='the number of training epochs.')
     parser.add_argument('--save_dir', type=str, default='results/iu_xray', help='the patch to save the models.')
     parser.add_argument('--record_dir', type=str, default='records/', help='the patch to save the results of experiments.')

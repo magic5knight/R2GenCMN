@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from modules.base_cmn import BaseCMN
 from modules.visual_extractor import VisualExtractor
+from modules import csms6s
 from modules.vmamba import Backbone_VSSM
 
 
@@ -19,6 +20,7 @@ class BaseCMNModel(nn.Module):
             patch_size=4,
             out_indices=(2,),
             forward_type="v04",
+            use_checkpoint=self._use_vmamba_checkpoint(args),
         )
         self.visual_ffn = nn.Sequential(
             nn.LayerNorm(384),
@@ -32,6 +34,17 @@ class BaseCMNModel(nn.Module):
             self.forward = self.forward_iu_xray
         else:
             self.forward = self.forward_mimic_cxr
+
+    @staticmethod
+    def _use_vmamba_checkpoint(args):
+        mode = getattr(args, 'vmamba_checkpoint', -1)
+        if mode != -1:
+            return bool(mode)
+        # Without a compiled selective-scan kernel, VMamba falls back to a pure-PyTorch
+        # per-token loop whose autograd graph is huge; checkpointing keeps it within GPU memory.
+        has_kernel = (csms6s.WITH_SELECTIVESCAN_OFLEX or csms6s.WITH_SELECTIVESCAN_CORE
+                      or csms6s.WITH_SELECTIVESCAN_MAMBA)
+        return not has_kernel
 
     def __str__(self):
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())

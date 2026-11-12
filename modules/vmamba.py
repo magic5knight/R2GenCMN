@@ -1235,7 +1235,7 @@ class VSSBlock(nn.Module):
 
     def forward(self, input: torch.Tensor):
         if self.use_checkpoint:
-            return checkpoint.checkpoint(self._forward, input)
+            return checkpoint.checkpoint(self._forward, input, use_reentrant=False)
         else:
             return self._forward(input)
 
