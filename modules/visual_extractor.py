@@ -9,13 +9,13 @@ class VisualExtractor(nn.Module):
         self.visual_extractor = args.visual_extractor
         self.pretrained = args.visual_extractor_pretrained
         model = getattr(models, self.visual_extractor)(pretrained=self.pretrained)
-        modules = list(model.children())[:-2]
+        # Keep the ResNet stem before maxpool: for 224x224 input this is
+        # [B, 64, 112, 112].
+        modules = [model.conv1, model.bn1, model.relu]
         self.model = nn.Sequential(*modules)
-        self.avg_fnt = torch.nn.AvgPool2d(kernel_size=7, stride=1, padding=0)
+        self.avg_fnt = torch.nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, images):
         patch_feats = self.model(images)
-        avg_feats = self.avg_fnt(patch_feats).squeeze().reshape(-1, patch_feats.size(1))
-        batch_size, feat_size, _, _ = patch_feats.shape
-        patch_feats = patch_feats.reshape(batch_size, feat_size, -1).permute(0, 2, 1)
+        avg_feats = self.avg_fnt(patch_feats).flatten(1)
         return patch_feats, avg_feats

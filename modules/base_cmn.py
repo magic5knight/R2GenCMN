@@ -309,9 +309,9 @@ class BaseCMN(AttModel):
         ff = PositionwiseFeedForward(self.d_model, self.d_ff, self.dropout)
         position = PositionalEncoding(self.d_model, self.dropout)
         model = Transformer(
-            Encoder(EncoderLayer(self.d_model, c(attn), c(ff), self.dropout), self.num_layers),
+            None,
             Decoder(DecoderLayer(self.d_model, c(attn), c(attn), c(ff), self.dropout), self.num_layers),
-            nn.Sequential(c(position)),
+            None,
             nn.Sequential(Embeddings(self.d_model, tgt_vocab), c(position)), cmn)
         for p in model.parameters():
             if p.dim() > 1:
@@ -333,6 +333,8 @@ class BaseCMN(AttModel):
         self.cmn = MultiThreadMemory(args.num_heads, args.d_model, topk=args.topk)
 
         self.model = self.make_model(tgt_vocab, self.cmn)
+        # Image features are already projected to d_model by visual_ffn.
+        self.att_embed = nn.Identity()
         self.logit = nn.Linear(args.d_model, tgt_vocab)
 
         self.memory_matrix = nn.Parameter(torch.FloatTensor(args.cmm_size, args.cmm_dim))
@@ -343,7 +345,7 @@ class BaseCMN(AttModel):
 
     def _prepare_feature(self, fc_feats, att_feats, att_masks):
         att_feats, seq, att_masks, seq_mask = self._prepare_feature_forward(att_feats, att_masks)
-        memory = self.model.encode(att_feats, att_masks)
+        memory = att_feats
 
         return fc_feats[..., :1], att_feats[..., :1], memory, att_masks
 
@@ -375,7 +377,7 @@ class BaseCMN(AttModel):
 
     def _forward(self, fc_feats, att_feats, seq, att_masks=None):
         att_feats, seq, att_masks, seq_mask = self._prepare_feature_forward(att_feats, att_masks, seq)
-        out = self.model(att_feats, seq, att_masks, seq_mask, memory_matrix=self.memory_matrix)
+        out = self.model.decode(att_feats, att_masks, seq, seq_mask, memory_matrix=self.memory_matrix)
         outputs = F.log_softmax(self.logit(out), dim=-1)
 
         return outputs
