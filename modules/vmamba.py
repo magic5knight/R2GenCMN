@@ -1590,19 +1590,56 @@ class Backbone_VSSM(VSSM):
             self.add_module(layer_name, layer)
 
         del self.classifier
+
+        # Drop stages after the last requested output (and that stage's downsample):
+        # they would be computed in forward but never receive gradients.
+        if len(out_indices) > 0:
+            last = max(out_indices)
+            self.layers = self.layers[:last + 1]
+            self.layers[last].downsample = nn.Identity()
+
         self.load_pretrained(pretrained)
 
     def load_pretrained(self, ckpt=None, key="model"):
-        if ckpt is None:
+        if not ckpt:
             return
-        
+
+        if ckpt.startswith(("http://", "https://")):
+            cache_dir = os.path.join(torch.hub.get_dir(), "checkpoints")
+            os.makedirs(cache_dir, exist_ok=True)
+            path = os.path.join(cache_dir, os.path.basename(ckpt).replace("%23", "#"))
+            if not os.path.exists(path):
+                print(f"Downloading VMamba checkpoint {ckpt} -> {path}")
+                torch.hub.download_url_to_file(ckpt, path, progress=True)
+            ckpt = path
+
         try:
-            _ckpt = torch.load(open(ckpt, "rb"), map_location=torch.device("cpu"))
-            print(f"Successfully load ckpt {ckpt}")
-            incompatibleKeys = self.load_state_dict(_ckpt[key], strict=False)
-            print(incompatibleKeys)        
-        except Exception as e:
-            print(f"Failed loading checkpoint form {ckpt}: {e}")
+            # Official checkpoints also store config/optimizer objects, so weights_only must be off.
+            _ckpt = torch.load(ckpt, map_location="cpu", weights_only=False)
+        except TypeError:  # torch < 1.13 has no weights_only
+            _ckpt = torch.load(ckpt, map_location="cpu")
+        state_dict = _ckpt.get(key, _ckpt) if isinstance(_ckpt, dict) else _ckpt
+
+        # Skip tensors whose shape differs (e.g. patch_embed.0 when in_chans != 3).
+        own = self.state_dict()
+        skipped = [k for k, v in state_dict.items() if k in own and own[k].shape != v.shape]
+        state_dict = {k: v for k, v in state_dict.items() if k not in skipped}
+
+        incompatible = self.load_state_dict(state_dict, strict=False)
+        loaded = len([k for k in state_dict if k in own])
+        print(f"Loaded VMamba checkpoint {ckpt}: {loaded}/{len(own)} tensors")
+        if skipped:
+            print(f"  skipped (shape mismatch, randomly initialised): {skipped}")
+        if incompatible.missing_keys:
+            print(f"  missing (randomly initialised): {incompatible.missing_keys}")
+        n = len(self.layers)
+        dropped = ("classifier.", f"layers.{n - 1}.downsample.") + tuple(f"layers.{i}." for i in range(n, 100))
+        unexpected = [k for k in incompatible.unexpected_keys if not k.startswith(dropped)]
+        n_dropped = len(incompatible.unexpected_keys) - len(unexpected)
+        if n_dropped:
+            print(f"  ignored {n_dropped} tensors of truncated stages / classifier")
+        if unexpected:
+            print(f"  unexpected: {unexpected}")
 
     def forward(self, x):
         def layer_forward(l, x):

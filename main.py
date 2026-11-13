@@ -34,6 +34,9 @@ def parse_agrs():
     # Model settings (for visual extractor)
     parser.add_argument('--visual_extractor', type=str, default='resnet101', help='the visual extractor to be used.')
     parser.add_argument('--visual_extractor_pretrained', type=bool, default=True, help='whether to load the pretrained visual extractor')
+    parser.add_argument('--vmamba_pretrained', type=str,
+                        default='https://github.com/MzeroMiko/VMamba/releases/download/%23v2cls/vssm1_tiny_0230s_ckpt_epoch_264.pth',
+                        help='VMamba-T [s1l8] ImageNet checkpoint: URL (cached in torch hub dir), local .pth path, or "none" to train from scratch.')
 
     # Model settings (for Transformer)
     parser.add_argument('--d_model', type=int, default=512, help='the dimension of Transformer.')

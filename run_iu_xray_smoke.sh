@@ -10,6 +10,7 @@ python main.py \
     --batch_size 1 \
     --visual_extractor resnet18 \
     --visual_extractor_pretrained "" \
+    --vmamba_pretrained none \
     --d_vf 512 \
     --num_layers 1 \
     --topk 8 \

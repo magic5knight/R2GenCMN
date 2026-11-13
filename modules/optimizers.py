@@ -3,10 +3,16 @@ from torch import optim
 
 
 def build_optimizer(args, model):
-    ve_params = list(map(id, model.visual_extractor.parameters()))
+    # Pretrained visual modules use the small lr_ve; VMamba joins them only when it loads ImageNet weights.
+    ve_modules = [model.visual_extractor]
+    vmamba_pretrained = getattr(args, 'vmamba_pretrained', None)
+    if hasattr(model, 'visual_backbone') and vmamba_pretrained and vmamba_pretrained.lower() != 'none':
+        ve_modules.append(model.visual_backbone)
+    ve_param_list = [p for m in ve_modules for p in m.parameters()]
+    ve_params = set(map(id, ve_param_list))
     ed_params = filter(lambda x: id(x) not in ve_params, model.parameters())
     optimizer = getattr(torch.optim, args.optim)(
-        [{'params': model.visual_extractor.parameters(), 'lr': args.lr_ve},
+        [{'params': ve_param_list, 'lr': args.lr_ve},
          {'params': ed_params, 'lr': args.lr_ed}],
         betas=args.adam_betas,
         eps=args.adam_eps,
