@@ -67,6 +67,36 @@ class BaseCMNModel(nn.Module):
         params = sum([np.prod(p.size()) for p in model_parameters])
         return super().__str__() + '\nTrainable parameters: {}'.format(params)
 
+    def count_parameters(self):
+        """Count total / trainable parameters of each component."""
+        def count(module):
+            total = sum(p.numel() for p in module.parameters())
+            trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
+            return total, trainable
+
+        stats = {
+            'ResNet stem (visual_extractor)': count(self.visual_extractor),
+            'VMamba (visual_backbone)': count(self.visual_backbone),
+            'Visual FFN (visual_ffn)': count(self.visual_ffn),
+            'Decoder + CMN (encoder_decoder)': count(self.encoder_decoder),
+        }
+        stats['TOTAL'] = count(self)
+        return stats
+
+    def log_parameters(self, logger):
+        stats = self.count_parameters()
+        logger.info('=' * 78)
+        logger.info('{:35s} {:>14s} {:>14s} {:>10s}'.format('Component', 'Total', 'Trainable', '% model'))
+        logger.info('-' * 78)
+        total_trainable = stats['TOTAL'][1]
+        for name, (total, trainable) in stats.items():
+            if name == 'TOTAL':
+                logger.info('-' * 78)
+            logger.info('{:35s} {:>14,} {:>14,} {:>9.2f}%'.format(
+                name, total, trainable, 100.0 * trainable / max(total_trainable, 1)))
+        logger.info('=' * 78)
+        return stats
+
     def _encode_image(self, images):
         feature_map, pooled = self.visual_extractor(images)
         feature_map = self.visual_backbone(feature_map)[0]  # [B,384,7,7]

@@ -1,4 +1,5 @@
 import argparse
+import logging
 
 import numpy as np
 import torch
@@ -130,6 +131,12 @@ def main():
 
     # build model architecture
     model = BaseCMNModel(args, tokenizer)
+
+    # log parameter counts right after the model is built
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO)
+    param_stats = model.log_parameters(logging.getLogger(__name__))
+    wandb.config.update({f'params/{k}': v[1] for k, v in param_stats.items()})
 
     # get function handles of loss and metrics
     criterion = compute_loss
