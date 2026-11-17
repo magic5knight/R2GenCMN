@@ -1,5 +1,7 @@
 import argparse
 import logging
+import os
+import time
 
 import numpy as np
 import torch
@@ -12,7 +14,7 @@ from modules.loss import compute_loss
 from modules.metrics import compute_scores
 from modules.optimizers import build_optimizer, build_lr_scheduler
 from modules.tokenizers import Tokenizer
-from modules.trainer import Trainer
+from modules.trainer import Trainer, load_checkpoint
 
 
 def parse_agrs():
@@ -80,6 +82,9 @@ def parse_agrs():
     parser.add_argument('--monitor_mode', type=str, default='max', choices=['min', 'max'], help='whether to max or min the metric.')
     parser.add_argument('--monitor_metric', type=str, default='BLEU_4', help='the metric to be monitored.')
     parser.add_argument('--early_stop', type=int, default=50, help='the patience of training.')
+    parser.add_argument('--time_limit_hours', type=float, default=9,
+                        help='stop gracefully (checkpoint saved, test skipped) when the next epoch would end later than '
+                             'this many hours after session start (env SESSION_START_TIME, else process start); <=0 disables.')
 
     # Optimization
     parser.add_argument('--optim', type=str, default='Adam', help='the type of the optimizer.')
@@ -100,6 +105,8 @@ def parse_agrs():
     # Others
     parser.add_argument('--seed', type=int, default=9233, help='.')
     parser.add_argument('--resume', type=str, help='whether to resume the training from existing checkpoints.')
+    parser.add_argument('--wandb_id', type=str, default=None,
+                        help='W&B run id to continue logging into; defaults to the id stored in the --resume checkpoint.')
 
     args = parser.parse_args()
     return args
@@ -108,12 +115,23 @@ def parse_agrs():
 def main():
     # parse arguments
     args = parse_agrs()
+    # The time limit counts from SESSION_START_TIME (unix seconds, set in the notebook's first cell)
+    # so setup time before main.py is included; otherwise from process start.
+    args.session_start = float(os.environ.get('SESSION_START_TIME', time.time()))
+
+    # continue the previous W&B run when resuming
+    run_id = args.wandb_id
+    if run_id is None and args.resume:
+        run_id = load_checkpoint(args.resume, map_location='cpu').get('wandb_run_id')
 
     wandb.init(
         project='r2gencmn',
-        name=f"r2gencmn_{datetime.now().strftime('%Y%m%d')}",
-        config=vars(args),
+        id=run_id,
+        resume='allow' if run_id else None,
+        name=None if run_id else f"r2gencmn_{datetime.now().strftime('%Y%m%d')}",
     )
+    # allow_val_change: values such as epochs/resume legitimately differ between resumed sessions
+    wandb.config.update({k: v for k, v in vars(args).items() if k != 'session_start'}, allow_val_change=True)
 
     # fix random seeds
     torch.manual_seed(args.seed)

@@ -1,10 +1,21 @@
 import logging
 import os
+import shutil
+import time
 from abc import abstractmethod
 
 import torch
 import wandb
 from numpy import inf
+
+
+def load_checkpoint(path, map_location='cpu'):
+    # Checkpoints hold numpy scalars (monitor_best, best_recorder), so the
+    # weights_only=True default of PyTorch >= 2.6 cannot unpickle them.
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:  # PyTorch < 1.13 has no weights_only argument
+        return torch.load(path, map_location=map_location)
 
 
 class BaseTrainer(object):
@@ -40,6 +51,12 @@ class BaseTrainer(object):
 
         self.start_epoch = 1
         self.checkpoint_dir = args.save_dir
+        self.not_improved_count = 0
+
+        # Graceful stop before the platform kills the session (e.g. Kaggle's 12h limit).
+        self.time_limit = getattr(args, 'time_limit_hours', 0) * 3600
+        self.session_start = getattr(args, 'session_start', time.time())
+        self.stopped_by_time = False
 
         self.best_recorder = {'val': {self.mnt_metric: self.mnt_best}}
         # The previous per-epoch test recorder is intentionally disabled:
@@ -56,8 +73,12 @@ class BaseTrainer(object):
         raise NotImplementedError
 
     def train(self):
-        not_improved_count = 0
+        if self.start_epoch > self.epochs:
+            self.logger.warning(
+                "start_epoch ({}) > --epochs ({}): no training epochs will run. "
+                "--epochs is the total target, raise it to continue training.".format(self.start_epoch, self.epochs))
         last_epoch = self.start_epoch - 1
+        train_start = time.time()
         for epoch in range(self.start_epoch, self.epochs + 1):
             last_epoch = epoch
             result = self._train_epoch(epoch)
@@ -97,20 +118,48 @@ class BaseTrainer(object):
 
                 if improved:
                     self.mnt_best = log[self.mnt_metric]
-                    not_improved_count = 0
+                    self.not_improved_count = 0
                     best = True
                 else:
-                    not_improved_count += 1
+                    self.not_improved_count += 1
 
-                if not_improved_count > self.early_stop:
+                if self.not_improved_count > self.early_stop:
                     self.logger.info("Validation performance didn\'t improve for {} epochs. " "Training stops.".format(
                         self.early_stop))
                     break
 
+            saved = False
             if epoch % self.save_period == 0 or best:
                 self._save_checkpoint(epoch, save_best=best)
+                saved = True
+
+            if epoch < self.epochs and self._time_limit_reached(epoch, train_start):
+                if not saved:
+                    self._save_checkpoint(epoch)
+                self.stopped_by_time = True
+                self.logger.info(
+                    "Time limit of {:.1f}h reached after epoch {}. Training stops; resume with "
+                    "--resume {}".format(self.time_limit / 3600, epoch,
+                                         os.path.join(self.checkpoint_dir, 'current_checkpoint.pth')))
+                break
+
+        if self.stopped_by_time:
+            self.logger.info("Stopped by time limit: skipping test evaluation until training finishes.")
+            return
 
         self._evaluate_best_on_test(step=last_epoch + 1)
+
+    def _time_limit_reached(self, epoch, train_start):
+        if self.time_limit <= 0:
+            return False
+        now = time.time()
+        elapsed = now - self.session_start
+        avg_epoch = (now - train_start) / (epoch - self.start_epoch + 1)
+        # stop if the next epoch (with a 20% margin) would cross the limit
+        projected = elapsed + 1.2 * avg_epoch
+        self.logger.info("Elapsed {:.2f}h of {:.2f}h limit, avg epoch {:.1f} min.".format(
+            elapsed / 3600, self.time_limit / 3600, avg_epoch / 60))
+        return projected > self.time_limit
 
     def _record_best(self, log):
         improved_val = (self.mnt_mode == 'min' and log[self.mnt_metric] <= self.best_recorder['val'][
@@ -153,31 +202,62 @@ class BaseTrainer(object):
         list_ids = list(range(n_gpu_use))
         return device, list_ids
 
+    @staticmethod
+    def _atomic_save(state, path):
+        # write to a temp file first so a kill mid-write never corrupts the previous checkpoint
+        tmp_path = path + '.tmp'
+        torch.save(state, tmp_path)
+        os.replace(tmp_path, path)
+
     def _save_checkpoint(self, epoch, save_best=False):
         state = {
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            'monitor_best': self.mnt_best
+            'lr_scheduler': self.lr_scheduler.state_dict(),
+            'monitor_best': self.mnt_best,
+            'not_improved_count': self.not_improved_count,
+            'best_recorder': self.best_recorder,
+            'wandb_run_id': wandb.run.id if wandb.run is not None else None,
         }
         filename = os.path.join(self.checkpoint_dir, 'current_checkpoint.pth')
-        torch.save(state, filename)
+        self._atomic_save(state, filename)
         self.logger.info("Saving checkpoint: {} ...".format(filename))
         if save_best:
             best_path = os.path.join(self.checkpoint_dir, 'model_best.pth')
-            torch.save(state, best_path)
+            self._atomic_save(state, best_path)
             self.logger.info("Saving current best: model_best.pth ...")
 
     def _resume_checkpoint(self, resume_path):
         resume_path = str(resume_path)
         self.logger.info("Loading checkpoint: {} ...".format(resume_path))
-        checkpoint = torch.load(resume_path)
+        checkpoint = load_checkpoint(resume_path, map_location=self.device)
         self.start_epoch = checkpoint['epoch'] + 1
         self.mnt_best = checkpoint['monitor_best']
         self.model.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
 
-        self.logger.info("Checkpoint loaded. Resume training from epoch {}".format(self.start_epoch))
+        if 'lr_scheduler' in checkpoint:
+            self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        else:
+            # older checkpoint: the current lr is already restored in the optimizer state,
+            # only the scheduler's epoch counter needs to catch up (step() runs once per epoch)
+            self.lr_scheduler.last_epoch = checkpoint['epoch']
+            self.logger.warning("Checkpoint has no lr_scheduler state; set last_epoch={}.".format(checkpoint['epoch']))
+
+        self.not_improved_count = checkpoint.get('not_improved_count', 0)
+        self.best_recorder = checkpoint.get('best_recorder', {'val': {self.mnt_metric: self.mnt_best}})
+
+        # _evaluate_best_on_test() reads model_best.pth from save_dir; bring it along
+        # when resuming from another (e.g. read-only Kaggle input) directory.
+        best_src = os.path.join(os.path.dirname(resume_path), 'model_best.pth')
+        best_dst = os.path.join(self.checkpoint_dir, 'model_best.pth')
+        if os.path.isfile(best_src) and not os.path.isfile(best_dst):
+            shutil.copyfile(best_src, best_dst)
+            self.logger.info("Copied {} to {}".format(best_src, best_dst))
+
+        self.logger.info("Checkpoint loaded. Resume training from epoch {} (not_improved_count={}, lr={})".format(
+            self.start_epoch, self.not_improved_count, [g['lr'] for g in self.optimizer.param_groups]))
 
 
 class Trainer(BaseTrainer):
@@ -264,7 +344,7 @@ class Trainer(BaseTrainer):
             return
 
         self.logger.info('Evaluating test set once using best checkpoint: {}'.format(best_path))
-        checkpoint = torch.load(best_path, map_location=self.device)
+        checkpoint = load_checkpoint(best_path, map_location=self.device)
         self.model.load_state_dict(checkpoint['state_dict'])
         self.model.eval()
 
